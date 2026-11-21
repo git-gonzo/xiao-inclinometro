@@ -1,0 +1,862 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Inclinómetro XIAO</title>
+<meta name="description" content="Muestra en el móvil la inclinación y los movimientos del XIAO nRF54LM20A Sense por Bluetooth LE.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: una columna tipo instrumento de cabina (horizonte artificial arriba, lecturas y registro debajo); dos columnas en pantallas anchas. */
+:root {
+  --bg: #eef2f3;
+  --panel: #ffffff;
+  --fg: #142026;
+  --muted: #5b6b72;
+  --line: #d3dcdf;
+  --accent: #c98a0c;          /* ambar de instrumento: simbolo del avion, roll */
+  --accent-2: #1f7a8c;        /* pitch */
+  --ok: #2e8b57;
+  --warn: #c98a0c;
+  --bad: #c8412f;
+  --sky: #3f88c5;
+  --sky-2: #7fb6e0;
+  --ground: #8a5a34;
+  --ground-2: #5e3b20;
+  --bezel: #1b262c;
+  --font-display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --font-data: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d1316; --panel: #151e22; --fg: #e4ecee; --muted: #8b9ca3; --line: #26343a;
+    --accent: #f0b43a; --accent-2: #4cb6c9; --ok: #4cc38a; --warn: #f0b43a; --bad: #ff6b55;
+    --bezel: #05080a; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d1316; --panel: #151e22; --fg: #e4ecee; --muted: #8b9ca3; --line: #26343a;
+  --accent: #f0b43a; --accent-2: #4cb6c9; --ok: #4cc38a; --warn: #f0b43a; --bad: #ff6b55;
+  --bezel: #05080a; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.45;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: max(16px, env(safe-area-inset-bottom, 0px));
+  -webkit-tap-highlight-color: transparent;
+}
+.wrap {
+  max-width: 980px;
+  margin: 0 auto;
+  padding-block: 14px 8px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid;
+  gap: 14px;
+}
+
+/* Cabecera */
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.brand { display: grid; gap: 2px; min-width: 0; }
+h1 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.35rem;
+  letter-spacing: -0.01em;
+  margin: 0;
+  text-wrap: balance;
+}
+.conn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-data);
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+.conn[data-state="connected"] .dot { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent); }
+.conn[data-state="connecting"] .dot { background: var(--warn); animation: pulse 1s infinite; }
+.conn[data-state="demo"] .dot { background: var(--accent-2); }
+.conn[data-state="error"] .dot { background: var(--bad); }
+@keyframes pulse { 50% { opacity: 0.3; } }
+
+button {
+  font: inherit;
+  font-weight: 600;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--fg);
+  padding: 10px 16px;
+  min-height: 44px;
+  cursor: pointer;
+  transition: transform 0.08s, background 0.15s;
+}
+button:active { transform: scale(0.97); }
+button:focus-visible { outline: 3px solid var(--accent-2); outline-offset: 2px; }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+button.primary {
+  background: var(--fg);
+  color: var(--bg);
+  border-color: var(--fg);
+}
+
+/* Rejilla principal */
+.main { display: grid; gap: 14px; }
+@media (min-width: 820px) {
+  .main { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 14px;
+  min-width: 0;
+}
+.label {
+  font-family: var(--font-data);
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0;
+}
+
+/* Horizonte */
+.instrument { display: grid; gap: 12px; justify-items: center; position: relative; }
+.horizon-box { width: 100%; max-width: 420px; aspect-ratio: 1; position: relative; }
+#horizon { width: 100%; height: 100%; display: block; }
+.flash { position: absolute; inset: 0; border-radius: 50%; pointer-events: none; opacity: 0; box-shadow: inset 0 0 0 10px var(--bad); }
+.flash.on { animation: flash 0.6s ease-out; }
+@keyframes flash { 0% { opacity: 1; } 100% { opacity: 0; } }
+.demo-badge {
+  position: absolute; top: 4px; left: 4px;
+  font-family: var(--font-data); font-size: 0.7rem; letter-spacing: 0.1em;
+  background: var(--accent-2); color: var(--panel);
+  padding: 3px 8px; border-radius: 6px;
+}
+
+/* Lecturas */
+.readouts {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.readout { display: grid; gap: 2px; justify-items: center; text-align: center; }
+.value {
+  font-family: var(--font-data);
+  font-weight: 600;
+  font-size: clamp(1.4rem, 7vw, 2rem);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.value .unit { font-size: 0.55em; color: var(--muted); margin-left: 1px; }
+#rollVal { color: var(--accent); }
+#pitchVal { color: var(--accent-2); }
+.pill {
+  display: inline-block;
+  font-family: var(--font-data);
+  font-weight: 600;
+  font-size: 0.85rem;
+  letter-spacing: 0.06em;
+  padding: 6px 10px;
+  border-radius: 999px;
+  margin-top: 4px;
+  background: color-mix(in srgb, var(--ok) 16%, transparent);
+  color: var(--ok);
+}
+.pill[data-moving="1"] { background: color-mix(in srgb, var(--warn) 20%, transparent); color: var(--warn); }
+.pill[data-stale="1"] { background: color-mix(in srgb, var(--muted) 18%, transparent); color: var(--muted); }
+
+.controls { display: flex; gap: 8px; flex-wrap: wrap; width: 100%; }
+.controls button { flex: 1 1 140px; }
+
+/* Grafica */
+.side { display: grid; gap: 14px; min-width: 0; }
+.chart-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.legend { display: flex; gap: 12px; font-family: var(--font-data); font-size: 0.75rem; color: var(--muted); }
+.legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 5px; }
+#chart { width: 100%; height: 170px; display: block; }
+
+/* Registro de eventos */
+.events { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; max-height: 300px; overflow-y: auto; }
+.events li {
+  display: grid;
+  grid-template-columns: 4.6em 1fr auto;
+  gap: 10px;
+  align-items: baseline;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  font-size: 0.9rem;
+}
+.events time { font-family: var(--font-data); font-size: 0.78rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.events .tag { font-family: var(--font-data); font-weight: 600; font-size: 0.78rem; letter-spacing: 0.04em; }
+.events .detail { font-family: var(--font-data); font-size: 0.8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.events li[data-kind="golpe"] .tag { color: var(--bad); }
+.events li[data-kind="caida"] .tag { color: var(--bad); }
+.events li[data-kind="info"] .tag { color: var(--accent-2); }
+.events li[data-kind="mov"] .tag { color: var(--warn); }
+.empty { color: var(--muted); font-size: 0.9rem; margin: 8px 0 0; }
+
+.stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+.stat { display: grid; gap: 2px; }
+.stat b { font-family: var(--font-data); font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+
+.notice {
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: color-mix(in srgb, var(--warn) 14%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent);
+  font-size: 0.92rem;
+}
+.notice strong { display: block; margin-bottom: 2px; }
+
+footer { color: var(--muted); font-size: 0.8rem; text-align: center; padding-inline: 16px; }
+footer code { font-family: var(--font-data); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <h1>Inclinómetro XIAO</h1>
+      <span class="conn" id="conn" data-state="demo"><span class="dot"></span><span id="connText">Demo: datos simulados</span></span>
+    </div>
+    <button class="primary" id="connectBtn" type="button">Conectar</button>
+  </header>
+
+  <div class="notice" id="notice" hidden></div>
+
+  <div class="main">
+    <section class="panel instrument" aria-label="Horizonte artificial">
+      <div class="horizon-box">
+        <canvas id="horizon" role="img" aria-label="Horizonte artificial con la inclinación actual"></canvas>
+        <div class="flash" id="flash"></div>
+        <span class="demo-badge" id="demoBadge">DEMO</span>
+      </div>
+
+      <div class="readouts">
+        <div class="readout">
+          <p class="label">Roll</p>
+          <div class="value" id="rollVal">0.0<span class="unit">°</span></div>
+        </div>
+        <div class="readout">
+          <p class="label">Pitch</p>
+          <div class="value" id="pitchVal">0.0<span class="unit">°</span></div>
+        </div>
+        <div class="readout">
+          <p class="label">Estado</p>
+          <span class="pill" id="statePill" data-moving="0">QUIETO</span>
+        </div>
+      </div>
+
+      <div class="controls">
+        <button type="button" id="zeroBtn" title="Toma la posición actual como 0°">Fijar cero</button>
+        <button type="button" id="calBtn" title="Recalibra el giroscopio de la placa (déjala quieta)">Recalibrar giro</button>
+      </div>
+    </section>
+
+    <div class="side">
+      <section class="panel" aria-label="Historial de inclinación">
+        <div class="chart-head">
+          <p class="label">Últimos 30 s</p>
+          <div class="legend">
+            <span><i style="background: var(--accent)"></i>Roll</span>
+            <span><i style="background: var(--accent-2)"></i>Pitch</span>
+          </div>
+        </div>
+        <canvas id="chart" role="img" aria-label="Gráfica de roll y pitch de los últimos 30 segundos"></canvas>
+        <div class="stats">
+          <div class="stat"><span class="label">Golpes</span><b id="shockCount">0</b></div>
+          <div class="stat"><span class="label">Movimientos</span><b id="moveCount">0</b></div>
+          <div class="stat"><span class="label">Datos/s</span><b id="rate">0</b></div>
+        </div>
+      </section>
+
+      <section class="panel" aria-label="Eventos">
+        <p class="label">Eventos</p>
+        <p class="empty" id="emptyEvents">Aquí aparecerán los golpes, caídas y calibraciones.</p>
+        <ul class="events" id="events"></ul>
+      </section>
+    </div>
+  </div>
+
+  <footer>Servicio UART de Nordic · dispositivo <code>XIAO-IMU</code> · datos <code>roll,pitch,estado</code> a 10 Hz</footer>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  // ---------- Bluetooth: servicio UART de Nordic ----------
+  const NUS_SERVICE = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+  const NUS_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"; // escribir hacia la placa
+  const NUS_TX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"; // notificaciones desde la placa
+  const DEVICE_NAME = "XIAO-IMU";
+
+  const $ = (id) => document.getElementById(id);
+  const els = {
+    conn: $("conn"), connText: $("connText"), connectBtn: $("connectBtn"), notice: $("notice"),
+    horizon: $("horizon"), flash: $("flash"), demoBadge: $("demoBadge"),
+    rollVal: $("rollVal"), pitchVal: $("pitchVal"), statePill: $("statePill"),
+    zeroBtn: $("zeroBtn"), calBtn: $("calBtn"), chart: $("chart"),
+    shockCount: $("shockCount"), moveCount: $("moveCount"), rate: $("rate"),
+    events: $("events"), emptyEvents: $("emptyEvents"),
+  };
+
+  const st = {
+    mode: "demo",            // demo | connecting | connected | disconnected
+    roll: 0, pitch: 0,       // ultimo valor recibido (grados)
+    shownRoll: 0, shownPitch: 0,
+    zeroRoll: 0, zeroPitch: 0,
+    moving: false,
+    lastDataMs: 0,
+    shocks: 0, moves: 0,
+    rxTimes: [],
+    calibrating: false,
+  };
+  const history = [];        // {t, r, p}
+  const HISTORY_MS = 30000;
+
+  let device = null, rxChar = null, rxBuffer = "", userDisconnect = false;
+
+  // ---------- Utilidades ----------
+  const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const fmt = (v) => (Math.abs(v) < 0.05 ? 0 : v).toFixed(1);
+  const clockTime = () => new Date().toLocaleTimeString("es-ES", { hour12: false });
+
+  function setConn(state, text) {
+    els.conn.dataset.state = state;
+    els.connText.textContent = text;
+  }
+
+  function showNotice(html) {
+    els.notice.innerHTML = html;
+    els.notice.hidden = !html;
+  }
+
+  function addEvent(kind, tag, detail = "") {
+    els.emptyEvents.hidden = true;
+    const li = document.createElement("li");
+    li.dataset.kind = kind;
+    const t = document.createElement("time");
+    t.textContent = clockTime();
+    const g = document.createElement("span");
+    g.className = "tag";
+    g.textContent = tag;
+    const d = document.createElement("span");
+    d.className = "detail";
+    d.textContent = detail;
+    li.append(t, g, d);
+    els.events.prepend(li);
+    while (els.events.children.length > 40) els.events.lastChild.remove();
+  }
+
+  function vibrate(pattern) {
+    if (st.mode !== "connected") return;
+    try { navigator.vibrate && navigator.vibrate(pattern); } catch (_) {}
+  }
+
+  function flash() {
+    els.flash.classList.remove("on");
+    void els.flash.offsetWidth;
+    els.flash.classList.add("on");
+  }
+
+  // ---------- Procesado de datos (igual para BLE y demo) ----------
+  function onSample(roll, pitch, moving, nowMs) {
+    st.roll = roll;
+    st.pitch = pitch;
+    st.lastDataMs = nowMs;
+    st.rxTimes.push(nowMs);
+    if (moving !== st.moving) {
+      st.moving = moving;
+      if (moving) st.moves++;
+    }
+    history.push({ t: nowMs, r: roll, p: pitch });
+    while (history.length && nowMs - history[0].t > HISTORY_MS) history.shift();
+  }
+
+  function onEvent(name, arg) {
+    switch (name) {
+      case "MOVIMIENTO":
+        if (!st.moving) { st.moving = true; st.moves++; }
+        break;
+      case "QUIETO":
+        st.moving = false;
+        break;
+      case "GOLPE":
+        st.shocks++;
+        addEvent("golpe", "GOLPE", arg ? `${arg} g` : "");
+        vibrate(180);
+        flash();
+        break;
+      case "CAIDA":
+        addEvent("caida", "CAÍDA LIBRE", "");
+        vibrate([120, 60, 120, 60, 120]);
+        flash();
+        break;
+      case "CALIBRANDO":
+        st.calibrating = true;
+        els.calBtn.disabled = true;
+        els.calBtn.textContent = "Calibrando…";
+        addEvent("info", "CALIBRANDO", "no muevas la placa");
+        break;
+      case "CALIBRADO":
+        st.calibrating = false;
+        els.calBtn.disabled = st.mode !== "connected" && st.mode !== "demo";
+        els.calBtn.textContent = "Recalibrar giro";
+        addEvent("info", "CALIBRADO", "");
+        break;
+      default:
+        addEvent("info", name, arg || "");
+    }
+  }
+
+  function onLine(line) {
+    line = line.trim();
+    if (!line) return;
+    if (line.startsWith("!")) {
+      const [name, ...rest] = line.slice(1).split(" ");
+      onEvent(name.toUpperCase(), rest.join(" "));
+      return;
+    }
+    const parts = line.split(",");
+    if (parts.length < 3) return;
+    const r = parseFloat(parts[0]), p = parseFloat(parts[1]), m = parts[2].trim() === "1";
+    if (Number.isFinite(r) && Number.isFinite(p)) onSample(r, p, m, performance.now());
+  }
+
+  function feed(text) {
+    rxBuffer += text;
+    let i;
+    while ((i = rxBuffer.indexOf("\n")) >= 0) {
+      onLine(rxBuffer.slice(0, i));
+      rxBuffer = rxBuffer.slice(i + 1);
+    }
+    if (rxBuffer.length > 512) rxBuffer = "";
+  }
+
+  // ---------- Conexion BLE ----------
+  const decoder = new TextDecoder();
+  function onNotify(e) { feed(decoder.decode(e.target.value)); }
+
+  async function connect() {
+    if (!("bluetooth" in navigator)) {
+      showNotice(
+        "<strong>Este navegador no tiene Web Bluetooth.</strong>" +
+        "En Android usa <b>Chrome</b>. En iPhone/iPad Safari no lo soporta: usa la app gratuita <b>Bluefy</b> y abre esta página desde ella."
+      );
+      return;
+    }
+    if (!window.isSecureContext) {
+      showNotice("<strong>La página tiene que abrirse por HTTPS.</strong>Web Bluetooth solo funciona en páginas seguras (https:// o localhost).");
+      return;
+    }
+    showNotice("");
+    try {
+      device = await navigator.bluetooth.requestDevice({
+        filters: [{ namePrefix: DEVICE_NAME }, { services: [NUS_SERVICE] }],
+        optionalServices: [NUS_SERVICE],
+      });
+    } catch (err) {
+      if (err && err.name === "NotFoundError") return; // el usuario cancelo el selector
+      setConn("error", "No se pudo buscar dispositivos");
+      showNotice(`<strong>Error de Bluetooth.</strong>${escapeHtml(err.message || String(err))}. Comprueba que el Bluetooth y la ubicación del móvil están activados.`);
+      return;
+    }
+    device.addEventListener("gattserverdisconnected", onDisconnected);
+    userDisconnect = false;
+    await openGatt();
+  }
+
+  async function openGatt(attempt = 1) {
+    st.mode = "connecting";
+    setConn("connecting", attempt > 1 ? `Reconectando (intento ${attempt})…` : `Conectando a ${device.name || DEVICE_NAME}…`);
+    els.connectBtn.disabled = true;
+    try {
+      const server = await device.gatt.connect();
+      const svc = await server.getPrimaryService(NUS_SERVICE);
+      const tx = await svc.getCharacteristic(NUS_TX);
+      rxChar = await svc.getCharacteristic(NUS_RX);
+      tx.removeEventListener("characteristicvaluechanged", onNotify);
+      tx.addEventListener("characteristicvaluechanged", onNotify);
+      await tx.startNotifications();
+
+      if (st.mode !== "connected") {
+        history.length = 0;
+        st.moving = false;
+      }
+      st.mode = "connected";
+      els.demoBadge.hidden = true;
+      setConn("connected", `Conectado a ${device.name || DEVICE_NAME}`);
+      els.connectBtn.textContent = "Desconectar";
+      els.connectBtn.disabled = false;
+      els.calBtn.disabled = false;
+      addEvent("info", "CONECTADO", device.name || DEVICE_NAME);
+      requestWakeLock();
+    } catch (err) {
+      if (attempt < 3 && !userDisconnect) {
+        await new Promise((r) => setTimeout(r, 800 * attempt));
+        return openGatt(attempt + 1);
+      }
+      st.mode = "disconnected";
+      setConn("error", "No se pudo conectar");
+      els.connectBtn.textContent = "Conectar";
+      els.connectBtn.disabled = false;
+      showNotice(`<strong>No se pudo conectar.</strong>${escapeHtml(err.message || String(err))}. Acerca el móvil a la placa y comprueba que tiene la antena puesta.`);
+    }
+  }
+
+  function onDisconnected() {
+    rxChar = null;
+    if (userDisconnect) {
+      st.mode = "disconnected";
+      setConn("idle", "Desconectado");
+      els.connectBtn.textContent = "Conectar";
+      els.connectBtn.disabled = false;
+      els.calBtn.disabled = true;
+      addEvent("info", "DESCONECTADO", "");
+      return;
+    }
+    addEvent("info", "CONEXIÓN PERDIDA", "reintentando");
+    openGatt(1);
+  }
+
+  function disconnect() {
+    userDisconnect = true;
+    if (device && device.gatt.connected) device.gatt.disconnect();
+  }
+
+  async function sendCommand(text) {
+    if (!rxChar) return;
+    const data = new TextEncoder().encode(text);
+    try {
+      if (rxChar.writeValueWithoutResponse) await rxChar.writeValueWithoutResponse(data);
+      else await rxChar.writeValue(data);
+    } catch (err) {
+      addEvent("info", "ERROR", "no se pudo enviar la orden");
+    }
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  // ---------- Pantalla siempre encendida mientras esta conectado ----------
+  let wakeLock = null;
+  async function requestWakeLock() {
+    try {
+      if ("wakeLock" in navigator && document.visibilityState === "visible") {
+        wakeLock = await navigator.wakeLock.request("screen");
+      }
+    } catch (_) { /* no disponible: sin problema */ }
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && st.mode === "connected") requestWakeLock();
+  });
+
+  // ---------- Modo demo (hasta que se conecta) ----------
+  const demo = { t0: performance.now(), nextSample: 0, nextShock: 6000, moving: false, quietSince: 0 };
+  function demoTick(now) {
+    if (st.mode !== "demo" || now < demo.nextSample) return;
+    demo.nextSample = now + 100;
+    const t = (now - demo.t0) / 1000;
+    // Mueve la placa a ratos y la deja quieta otros ratos
+    const phase = (t % 14) / 14;
+    const active = phase < 0.6;
+    const env = active ? Math.sin(Math.PI * phase / 0.6) : 0;
+    const r = 4 + env * (28 * Math.sin(t * 1.3) + 6 * Math.sin(t * 4.1));
+    const p = 1.5 + env * (18 * Math.sin(t * 0.9 + 1) + 4 * Math.sin(t * 3.3));
+    const moving = env > 0.12;
+    if (moving && !demo.moving) onEvent("MOVIMIENTO");
+    if (!moving && demo.moving) onEvent("QUIETO");
+    demo.moving = moving;
+    onSample(r, p, moving, now);
+    if (now - demo.t0 > demo.nextShock) {
+      demo.nextShock += 9000 + Math.random() * 6000;
+      onEvent("GOLPE", (2 + Math.random() * 1.2).toFixed(2));
+    }
+  }
+
+  // ---------- Dibujo: horizonte artificial ----------
+  const DEG = Math.PI / 180;
+  function fitCanvas(c) {
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    const w = Math.round(c.clientWidth * dpr), h = Math.round(c.clientHeight * dpr);
+    if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+    return dpr;
+  }
+
+  function drawHorizon(roll, pitch) {
+    const c = els.horizon;
+    const dpr = fitCanvas(c);
+    const ctx = c.getContext("2d");
+    const S = c.width, R = S / 2 - 6 * dpr, cx = S / 2, cy = S / 2;
+    const pxPerDeg = R / 45;   // +-45 grados de pitch llenan el disco
+    const col = {
+      sky: css("--sky"), sky2: css("--sky-2"), ground: css("--ground"), ground2: css("--ground-2"),
+      accent: css("--accent"), bezel: css("--bezel"),
+    };
+    ctx.clearRect(0, 0, S, S);
+
+    // Disco interior que gira con roll y se desplaza con pitch
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, R, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.translate(cx, cy);
+    ctx.rotate(-roll * DEG);
+    ctx.translate(0, pitch * pxPerDeg);
+    const big = S * 2;
+    let g = ctx.createLinearGradient(0, -R * 1.5, 0, 0);
+    g.addColorStop(0, col.sky);
+    g.addColorStop(1, col.sky2);
+    ctx.fillStyle = g;
+    ctx.fillRect(-big, -big, big * 2, big);
+    g = ctx.createLinearGradient(0, 0, 0, R * 1.5);
+    g.addColorStop(0, col.ground);
+    g.addColorStop(1, col.ground2);
+    ctx.fillStyle = g;
+    ctx.fillRect(-big, 0, big * 2, big);
+    // Linea del horizonte
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 2.5 * dpr;
+    ctx.beginPath();
+    ctx.moveTo(-big, 0);
+    ctx.lineTo(big, 0);
+    ctx.stroke();
+    // Escalera de pitch cada 10 grados
+    ctx.fillStyle = "#ffffff";
+    ctx.font = `${600} ${11 * dpr}px ${css("--font-data") || "monospace"}`;
+    ctx.textBaseline = "middle";
+    for (let d = -60; d <= 60; d += 5) {
+      if (d === 0) continue;
+      const y = -d * pxPerDeg;
+      const w = (d % 10 === 0 ? 0.32 : 0.14) * R;
+      ctx.lineWidth = 1.6 * dpr;
+      ctx.beginPath();
+      ctx.moveTo(-w, y);
+      ctx.lineTo(w, y);
+      ctx.stroke();
+      if (d % 10 === 0) {
+        const txt = String(Math.abs(d));
+        ctx.textAlign = "right";
+        ctx.fillText(txt, -w - 6 * dpr, y);
+        ctx.textAlign = "left";
+        ctx.fillText(txt, w + 6 * dpr, y);
+      }
+    }
+    ctx.restore();
+
+    // Escala de roll fija (arriba) e indicador
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.strokeStyle = "#ffffff";
+    ctx.fillStyle = "#ffffff";
+    for (const d of [-60, -45, -30, -20, -10, 0, 10, 20, 30, 45, 60]) {
+      const a = (d - 90) * DEG;
+      const len = (d % 30 === 0 ? 0.11 : 0.06) * R;
+      ctx.lineWidth = (d === 0 ? 3 : 2) * dpr;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a) * R, Math.sin(a) * R);
+      ctx.lineTo(Math.cos(a) * (R - len), Math.sin(a) * (R - len));
+      ctx.stroke();
+    }
+    // Puntero de roll (gira con el disco)
+    ctx.rotate(-roll * DEG);
+    ctx.fillStyle = col.accent;
+    ctx.beginPath();
+    const tip = R - 0.13 * R;
+    ctx.moveTo(0, -tip);
+    ctx.lineTo(-0.045 * R, -tip + 0.08 * R);
+    ctx.lineTo(0.045 * R, -tip + 0.08 * R);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
+    // Simbolo fijo del avion (la placa)
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.strokeStyle = col.accent;
+    ctx.lineWidth = 4.5 * dpr;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.shadowColor = "rgba(0,0,0,0.35)";
+    ctx.shadowBlur = 4 * dpr;
+    ctx.beginPath();
+    ctx.moveTo(-0.42 * R, 0);
+    ctx.lineTo(-0.14 * R, 0);
+    ctx.lineTo(-0.07 * R, 0.06 * R);
+    ctx.moveTo(0.42 * R, 0);
+    ctx.lineTo(0.14 * R, 0);
+    ctx.lineTo(0.07 * R, 0.06 * R);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, 0, 3.5 * dpr, 0, Math.PI * 2);
+    ctx.fillStyle = col.accent;
+    ctx.fill();
+    ctx.restore();
+
+    // Bisel
+    ctx.beginPath();
+    ctx.arc(cx, cy, R + 2 * dpr, 0, Math.PI * 2);
+    ctx.strokeStyle = col.bezel;
+    ctx.lineWidth = 6 * dpr;
+    ctx.stroke();
+  }
+
+  // ---------- Dibujo: grafica de los ultimos 30 s ----------
+  function drawChart(now) {
+    const c = els.chart;
+    const dpr = fitCanvas(c);
+    const ctx = c.getContext("2d");
+    const W = c.width, H = c.height;
+    const padL = 34 * dpr, padR = 6 * dpr, padT = 8 * dpr, padB = 18 * dpr;
+    const col = { line: css("--line"), muted: css("--muted"), accent: css("--accent"), accent2: css("--accent-2") };
+    ctx.clearRect(0, 0, W, H);
+
+    let maxAbs = 0;
+    for (const s of history) maxAbs = Math.max(maxAbs, Math.abs(s.r - st.zeroRoll), Math.abs(s.p - st.zeroPitch));
+    const range = Math.max(30, Math.ceil(maxAbs / 15) * 15);
+    const x = (t) => padL + (1 - (now - t) / HISTORY_MS) * (W - padL - padR);
+    const y = (v) => padT + (1 - (v + range) / (2 * range)) * (H - padT - padB);
+
+    // Rejilla y etiquetas del eje Y
+    ctx.font = `${10 * dpr}px ${css("--font-data") || "monospace"}`;
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    for (const v of [range, range / 2, 0, -range / 2, -range]) {
+      ctx.strokeStyle = col.line;
+      ctx.lineWidth = (v === 0 ? 1.5 : 1) * dpr;
+      ctx.beginPath();
+      ctx.moveTo(padL, y(v));
+      ctx.lineTo(W - padR, y(v));
+      ctx.stroke();
+      ctx.fillStyle = col.muted;
+      ctx.fillText(`${v}°`, padL - 5 * dpr, y(v));
+    }
+    // Etiquetas del eje X
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
+    for (const s of [30, 20, 10, 0]) {
+      ctx.fillStyle = col.muted;
+      ctx.fillText(s === 0 ? "ahora" : `-${s}s`, Math.min(Math.max(x(now - s * 1000), padL + 12 * dpr), W - padR - 16 * dpr), H - 4 * dpr);
+    }
+
+    const series = (key, zero, color) => {
+      if (history.length < 2) return;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2 * dpr;
+      ctx.lineJoin = "round";
+      ctx.beginPath();
+      history.forEach((s, i) => {
+        const px = x(s.t), py = y(s[key] - zero);
+        i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+      });
+      ctx.stroke();
+      const last = history[history.length - 1];
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(x(last.t), y(last[key] - zero), 3.5 * dpr, 0, Math.PI * 2);
+      ctx.fill();
+    };
+    series("p", st.zeroPitch, col.accent2);
+    series("r", st.zeroRoll, col.accent);
+  }
+
+  // ---------- Bucle de pantalla ----------
+  function frame(now) {
+    demoTick(now);
+
+    const targetR = st.roll - st.zeroRoll, targetP = st.pitch - st.zeroPitch;
+    // Suavizado para que el horizonte no salte entre muestras (10 Hz)
+    let dR = targetR - st.shownRoll;
+    if (dR > 180) dR -= 360;
+    if (dR < -180) dR += 360;
+    st.shownRoll += dR * 0.25;
+    st.shownPitch += (targetP - st.shownPitch) * 0.25;
+
+    drawHorizon(st.shownRoll, st.shownPitch);
+    drawChart(now);
+
+    els.rollVal.firstChild.nodeValue = fmt(targetR);
+    els.pitchVal.firstChild.nodeValue = fmt(targetP);
+
+    const stale = st.mode === "connected" && now - st.lastDataMs > 2000;
+    els.statePill.dataset.stale = stale ? "1" : "0";
+    els.statePill.dataset.moving = st.moving ? "1" : "0";
+    els.statePill.textContent = stale ? "SIN DATOS" : st.moving ? "MOVIMIENTO" : "QUIETO";
+
+    while (st.rxTimes.length && now - st.rxTimes[0] > 1000) st.rxTimes.shift();
+    els.rate.textContent = st.rxTimes.length;
+    els.shockCount.textContent = st.shocks;
+    els.moveCount.textContent = st.moves;
+
+    requestAnimationFrame(frame);
+  }
+
+  // ---------- Botones ----------
+  els.connectBtn.addEventListener("click", () => {
+    if (st.mode === "connected") disconnect();
+    else connect();
+  });
+  els.zeroBtn.addEventListener("click", () => {
+    if (els.zeroBtn.dataset.zeroed === "1") {
+      st.zeroRoll = 0; st.zeroPitch = 0;
+      els.zeroBtn.dataset.zeroed = "0";
+      els.zeroBtn.textContent = "Fijar cero";
+      addEvent("info", "CERO", "quitado");
+    } else {
+      st.zeroRoll = st.roll; st.zeroPitch = st.pitch;
+      els.zeroBtn.dataset.zeroed = "1";
+      els.zeroBtn.textContent = "Quitar cero";
+      addEvent("info", "CERO", `roll ${fmt(st.roll)}°, pitch ${fmt(st.pitch)}°`);
+    }
+  });
+  els.calBtn.addEventListener("click", () => {
+    if (st.mode === "demo") {
+      onEvent("CALIBRANDO");
+      setTimeout(() => onEvent("CALIBRADO"), 1200);
+    } else {
+      sendCommand("c");
+    }
+  });
+
+  if (!("bluetooth" in navigator)) {
+    showNotice(
+      "<strong>Este navegador no tiene Web Bluetooth.</strong>" +
+      "Estás viendo datos simulados. En Android abre esta página con <b>Chrome</b>; en iPhone/iPad usa la app <b>Bluefy</b>."
+    );
+  }
+
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
